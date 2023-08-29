@@ -5,13 +5,15 @@ namespace Jenssegers\Mongodb;
 use function class_exists;
 use Composer\InstalledVersions;
 use Illuminate\Database\Connection as BaseConnection;
-use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use Jenssegers\Mongodb\Concerns\ManagesTransactions;
 use MongoDB\Client;
 use MongoDB\Database;
 use Throwable;
 
+/**
+ * @mixin Database
+ */
 class Connection extends BaseConnection
 {
     use ManagesTransactions;
@@ -45,7 +47,7 @@ class Connection extends BaseConnection
         $dsn = $this->getDsn($config);
 
         // You can pass options directly to the MongoDB constructor
-        $options = Arr::get($config, 'options', []);
+        $options = $config['options'] ?? [];
 
         // Create the connection
         $this->connection = $this->createConnection($dsn, $config, $options);
@@ -71,7 +73,7 @@ class Connection extends BaseConnection
      */
     public function collection($collection)
     {
-        $query = new Query\Builder($this, $this->getPostProcessor());
+        $query = new Query\Builder($this, $this->getQueryGrammar(), $this->getPostProcessor());
 
         return $query->from($collection);
     }

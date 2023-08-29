@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+namespace Jenssegers\Mongodb\Tests;
+
+use DateTimeImmutable;
+use Jenssegers\Mongodb\Tests\Models\Birthday;
+use Jenssegers\Mongodb\Tests\Models\Scoped;
+use Jenssegers\Mongodb\Tests\Models\User;
+
 class QueryTest extends TestCase
 {
     protected static $started = false;
@@ -18,12 +25,13 @@ class QueryTest extends TestCase
         User::create(['name' => 'Tommy Toe', 'age' => 33, 'title' => 'user']);
         User::create(['name' => 'Yvonne Yoe', 'age' => 35, 'title' => 'admin']);
         User::create(['name' => 'Error', 'age' => null, 'title' => null]);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2020-04-10', 'day' => '10', 'month' => '04', 'year' => '2020', 'time' => '10:53:11']);
-        Birthday::create(['name' => 'Jane Doe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:12']);
-        Birthday::create(['name' => 'Harry Hoe', 'birthday' => '2021-05-11', 'day' => '11', 'month' => '05', 'year' => '2021', 'time' => '10:53:13']);
-        Birthday::create(['name' => 'Robert Doe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:14']);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2021-05-12', 'day' => '12', 'month' => '05', 'year' => '2021', 'time' => '10:53:15']);
-        Birthday::create(['name' => 'Mark Moe', 'birthday' => '2022-05-12', 'day' => '12', 'month' => '05', 'year' => '2022', 'time' => '10:53:16']);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2020-04-10 10:53:11')]);
+        Birthday::create(['name' => 'Jane Doe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:12')]);
+        Birthday::create(['name' => 'Harry Hoe', 'birthday' => new DateTimeImmutable('2021-05-11 10:53:13')]);
+        Birthday::create(['name' => 'Robert Doe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:14')]);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2021-05-12 10:53:15')]);
+        Birthday::create(['name' => 'Mark Moe', 'birthday' => new DateTimeImmutable('2022-05-12 10:53:16')]);
+        Birthday::create(['name' => 'Boo']);
     }
 
     public function tearDown(): void
@@ -64,6 +72,21 @@ class QueryTest extends TestCase
         $this->assertCount(2, $users);
     }
 
+    public function testRegexp(): void
+    {
+        User::create(['name' => 'Simple', 'company' => 'acme']);
+        User::create(['name' => 'With slash', 'company' => 'oth/er']);
+
+        $users = User::where('company', 'regexp', '/^acme$/')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('company', 'regexp', '/^ACME$/i')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('company', 'regexp', '/^oth\/er$/')->get();
+        $this->assertCount(1, $users);
+    }
+
     public function testLike(): void
     {
         $users = User::where('name', 'like', '%doe')->get();
@@ -76,6 +99,12 @@ class QueryTest extends TestCase
         $this->assertCount(3, $users);
 
         $users = User::where('name', 'like', 't%')->get();
+        $this->assertCount(1, $users);
+
+        $users = User::where('name', 'like', 'j___ doe')->get();
+        $this->assertCount(2, $users);
+
+        $users = User::where('name', 'like', '_oh_ _o_')->get();
         $this->assertCount(1, $users);
     }
 
@@ -177,45 +206,84 @@ class QueryTest extends TestCase
 
         $birthdayCount = Birthday::whereDate('birthday', '2021-05-11')->get();
         $this->assertCount(1, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '>', '2021-05-11')->get();
+        $this->assertCount(4, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '>=', '2021-05-11')->get();
+        $this->assertCount(5, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<', '2021-05-11')->get();
+        $this->assertCount(1, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<=', '2021-05-11')->get();
+        $this->assertCount(2, $birthdayCount);
+
+        $birthdayCount = Birthday::whereDate('birthday', '<>', '2021-05-11')->get();
+        $this->assertCount(6, $birthdayCount);
     }
 
     public function testWhereDay(): void
     {
-        $day = Birthday::whereDay('day', '12')->get();
+        $day = Birthday::whereDay('birthday', '12')->get();
         $this->assertCount(4, $day);
 
-        $day = Birthday::whereDay('day', '11')->get();
+        $day = Birthday::whereDay('birthday', '11')->get();
         $this->assertCount(1, $day);
     }
 
     public function testWhereMonth(): void
     {
-        $month = Birthday::whereMonth('month', '04')->get();
+        $month = Birthday::whereMonth('birthday', '04')->get();
         $this->assertCount(1, $month);
 
-        $month = Birthday::whereMonth('month', '05')->get();
+        $month = Birthday::whereMonth('birthday', '05')->get();
         $this->assertCount(5, $month);
+
+        $month = Birthday::whereMonth('birthday', '>=', '5')->get();
+        $this->assertCount(5, $month);
+
+        $month = Birthday::whereMonth('birthday', '<', '10')->get();
+        $this->assertCount(7, $month);
+
+        $month = Birthday::whereMonth('birthday', '<>', '5')->get();
+        $this->assertCount(2, $month);
     }
 
     public function testWhereYear(): void
     {
-        $year = Birthday::whereYear('year', '2021')->get();
+        $year = Birthday::whereYear('birthday', '2021')->get();
         $this->assertCount(4, $year);
 
-        $year = Birthday::whereYear('year', '2022')->get();
+        $year = Birthday::whereYear('birthday', '2022')->get();
         $this->assertCount(1, $year);
 
-        $year = Birthday::whereYear('year', '<', '2021')->get();
-        $this->assertCount(1, $year);
+        $year = Birthday::whereYear('birthday', '<', '2021')->get();
+        $this->assertCount(2, $year);
+
+        $year = Birthday::whereYear('birthday', '<>', '2021')->get();
+        $this->assertCount(3, $year);
     }
 
     public function testWhereTime(): void
     {
-        $time = Birthday::whereTime('time', '10:53:11')->get();
+        $time = Birthday::whereTime('birthday', '10:53:11')->get();
         $this->assertCount(1, $time);
 
-        $time = Birthday::whereTime('time', '>=', '10:53:14')->get();
+        $time = Birthday::whereTime('birthday', '10:53')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '10')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '>=', '10:53:14')->get();
         $this->assertCount(3, $time);
+
+        $time = Birthday::whereTime('birthday', '!=', '10:53:14')->get();
+        $this->assertCount(6, $time);
+
+        $time = Birthday::whereTime('birthday', '<', '10:53:12')->get();
+        $this->assertCount(2, $time);
     }
 
     public function testOrder(): void

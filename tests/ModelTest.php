@@ -2,7 +2,11 @@
 
 declare(strict_types=1);
 
+namespace Jenssegers\Mongodb\Tests;
+
 use Carbon\Carbon;
+use DateTime;
+use DateTimeImmutable;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Date;
@@ -10,6 +14,16 @@ use Illuminate\Support\Str;
 use Jenssegers\Mongodb\Collection;
 use Jenssegers\Mongodb\Connection;
 use Jenssegers\Mongodb\Eloquent\Model;
+use Jenssegers\Mongodb\Tests\Models\Book;
+use Jenssegers\Mongodb\Tests\Models\Guarded;
+use Jenssegers\Mongodb\Tests\Models\IdIsBinaryUuid;
+use Jenssegers\Mongodb\Tests\Models\IdIsInt;
+use Jenssegers\Mongodb\Tests\Models\IdIsString;
+use Jenssegers\Mongodb\Tests\Models\Item;
+use Jenssegers\Mongodb\Tests\Models\MemberStatus;
+use Jenssegers\Mongodb\Tests\Models\Soft;
+use Jenssegers\Mongodb\Tests\Models\User;
+use MongoDB\BSON\Binary;
 use MongoDB\BSON\ObjectID;
 use MongoDB\BSON\UTCDateTime;
 
@@ -315,11 +329,103 @@ class ModelTest extends TestCase
         $this->assertEquals(2, Soft::count());
     }
 
-    public function testPrimaryKey(): void
+    /**
+     * @dataProvider provideId
+     */
+    public function testPrimaryKey(string $model, $id, $expected, bool $expectedFound): void
     {
-        $user = new User;
-        $this->assertEquals('_id', $user->getKeyName());
+        $model::truncate();
+        $expectedType = get_debug_type($expected);
 
+        $document = new $model;
+        $this->assertEquals('_id', $document->getKeyName());
+
+        $document->_id = $id;
+        $document->save();
+        $this->assertSame($expectedType, get_debug_type($document->_id));
+        $this->assertEquals($expected, $document->_id);
+        $this->assertSame($expectedType, get_debug_type($document->getKey()));
+        $this->assertEquals($expected, $document->getKey());
+
+        $check = $model::find($id);
+
+        if ($expectedFound) {
+            $this->assertNotNull($check, 'Not found');
+            $this->assertSame($expectedType, get_debug_type($check->_id));
+            $this->assertEquals($id, $check->_id);
+            $this->assertSame($expectedType, get_debug_type($check->getKey()));
+            $this->assertEquals($id, $check->getKey());
+        } else {
+            $this->assertNull($check, 'Found');
+        }
+    }
+
+    public static function provideId(): iterable
+    {
+        yield 'int' => [
+            'model' => User::class,
+            'id' => 10,
+            'expected' => 10,
+            // Don't expect this to be found, as the int is cast to string for the query
+            'expectedFound' => false,
+        ];
+
+        yield 'cast as int' => [
+            'model' => IdIsInt::class,
+            'id' => 10,
+            'expected' => 10,
+            'expectedFound' => true,
+        ];
+
+        yield 'string' => [
+            'model' => User::class,
+            'id' => 'user-10',
+            'expected' => 'user-10',
+            'expectedFound' => true,
+        ];
+
+        yield 'cast as string' => [
+            'model' => IdIsString::class,
+            'id' => 'user-10',
+            'expected' => 'user-10',
+            'expectedFound' => true,
+        ];
+
+        $objectId = new ObjectID();
+        yield 'ObjectID' => [
+            'model' => User::class,
+            'id' => $objectId,
+            'expected' => (string) $objectId,
+            'expectedFound' => true,
+        ];
+
+        $binaryUuid = new Binary(hex2bin('0c103357380648c9a84b867dcb625cfb'), Binary::TYPE_UUID);
+        yield 'BinaryUuid' => [
+            'model' => User::class,
+            'id' => $binaryUuid,
+            'expected' => (string) $binaryUuid,
+            'expectedFound' => true,
+        ];
+
+        yield 'cast as BinaryUuid' => [
+            'model' => IdIsBinaryUuid::class,
+            'id' => $binaryUuid,
+            'expected' => (string) $binaryUuid,
+            'expectedFound' => true,
+        ];
+
+        $date = new UTCDateTime();
+        yield 'UTCDateTime' => [
+            'model' => User::class,
+            'id' => $date,
+            'expected' => $date,
+            // Don't expect this to be found, as the original value is stored as UTCDateTime but then cast to string
+            'expectedFound' => false,
+        ];
+    }
+
+    public function testCustomPrimaryKey(): void
+    {
         $book = new Book;
         $this->assertEquals('title', $book->getKeyName());
 
@@ -368,6 +474,10 @@ class ModelTest extends TestCase
         $user1->unset('note1');
 
         $this->assertFalse(isset($user1->note1));
+
+        $user1->save();
+
+        $this->assertFalse(isset($user1->note1));
         $this->assertTrue(isset($user1->note2));
         $this->assertTrue(isset($user2->note1));
         $this->assertTrue(isset($user2->note2));
@@ -382,9 +492,60 @@ class ModelTest extends TestCase
         $this->assertTrue(isset($user2->note2));
 
         $user2->unset(['note1', 'note2']);
+        $user2->save();
 
         $this->assertFalse(isset($user2->note1));
         $this->assertFalse(isset($user2->note2));
+
+        // Re-re-fetch to be sure
+        $user2 = User::find($user2->_id);
+
+        $this->assertFalse(isset($user2->note1));
+        $this->assertFalse(isset($user2->note2));
+    }
+
+    public function testUnsetAndSet(): void
+    {
+        $user = User::create(['name' => 'John Doe', 'note1' => 'ABC', 'note2' => 'DEF']);
+
+        $this->assertTrue($user->originalIsEquivalent('note1'));
+
+        // Unset the value
+        $user->unset('note1');
+        $this->assertFalse(isset($user->note1));
+        $this->assertNull($user['note1']);
+        $this->assertFalse($user->originalIsEquivalent('note1'));
+        $this->assertTrue($user->isDirty());
+        $this->assertSame(['$unset' => ['note1' => true]], $user->getDirty());
+
+        // Reset the previous value
+        $user->note1 = 'ABC';
+        $this->assertTrue($user->originalIsEquivalent('note1'));
+        $this->assertFalse($user->isDirty());
+        $this->assertSame([], $user->getDirty());
+
+        // Change the value
+        $user->note1 = 'GHI';
+        $this->assertTrue(isset($user->note1));
+        $this->assertSame('GHI', $user['note1']);
+        $this->assertFalse($user->originalIsEquivalent('note1'));
+        $this->assertTrue($user->isDirty());
+        $this->assertSame(['note1' => 'GHI'], $user->getDirty());
+
+        // Fetch to be sure the changes are not persisted yet
+        $userCheck = User::find($user->_id);
+        $this->assertSame('ABC', $userCheck['note1']);
+
+        // Persist the changes
+        $user->save();
+
+        // Re-fetch to be sure
+        $user = User::find($user->_id);
+
+        $this->assertTrue(isset($user->note1));
+        $this->assertSame('GHI', $user->note1);
+        $this->assertTrue($user->originalIsEquivalent('note1'));
+        $this->assertFalse($user->isDirty());
     }
 
     public function testDates(): void
@@ -728,12 +889,12 @@ class ModelTest extends TestCase
         User::create(['name' => 'spork', 'tags' => ['sharp', 'pointy', 'round', 'bowl']]);
         User::create(['name' => 'spoon', 'tags' => ['round', 'bowl']]);
 
-        $count = 0;
-        User::chunkById(2, function (EloquentCollection $items) use (&$count) {
-            $count += count($items);
+        $names = [];
+        User::chunkById(2, function (EloquentCollection $items) use (&$names) {
+            $names = array_merge($names, $items->pluck('name')->all());
         });
 
-        $this->assertEquals(3, $count);
+        $this->assertEquals(['fork', 'spork', 'spoon'], $names);
     }
 
     public function testTruncateModel()
